@@ -18,6 +18,7 @@ import javax.management.StandardMBean;
 
 import org.apache.commons.io.IOUtils;
 import org.apache.sling.api.resource.LoginException;
+import org.apache.sling.api.resource.PersistenceException;
 import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ResourceResolver;
 import org.apache.sling.api.resource.ResourceResolverFactory;
@@ -109,6 +110,8 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
                     this.export(resourceResolver, unreferencedAssets);
                     break;
                 case REMOVE_UNREFERENCED:
+                    this.remove(resourceResolver, unreferencedAssets);
+                    break;
             }
             final long elapsed = System.currentTimeMillis() - start;
             LOGGER.info("Finished running operation {}, elapsed time in milliseconds {}", op, elapsed);
@@ -118,6 +121,23 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         } finally {
             if (resourceResolver != null) {
                 resourceResolver.close();
+            }
+        }
+    }
+
+    private void remove(final ResourceResolver resourceResolver, final Set<String> unreferencedAssets) {
+        for (final String unreferencedAsset : unreferencedAssets) {
+            try {
+                final Resource asset = resourceResolver.getResource(unreferencedAsset);
+                if (asset == null) {
+                    LOGGER.error("Asset {} suddenly not found anymore ?", unreferencedAsset);
+                    continue;
+                }
+                resourceResolver.delete(asset);
+                resourceResolver.commit();
+                LOGGER.info("Asset {} removed.", unreferencedAsset);
+            } catch (final PersistenceException e) {
+                LOGGER.error("Error in remove:", e);
             }
         }
     }
@@ -154,6 +174,7 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
                 } catch (final IOException e) {
                     LOGGER.error("IOException in export:", e);
                 }
+                LOGGER.info("Asset {} saved in {}", assetPath, assetFile);
             }
         }
     }
