@@ -1,23 +1,21 @@
 package be.marble.sling.assetmanager;
 
 import org.osgi.service.metatype.annotations.AttributeDefinition;
-import org.osgi.service.metatype.annotations.AttributeType;
 import org.osgi.service.metatype.annotations.ObjectClassDefinition;
 import org.osgi.service.metatype.annotations.Option;
 
-@ObjectClassDefinition(name = "marble.be Asset Manager Configuration",
+@ObjectClassDefinition(name = "be.marble Asset Manager Configuration",
         description = "Configure the marble.be Asset Manager Service")
 public @interface AssetManagerConfiguration {
 
-    @AttributeDefinition(name = "user.name", description = "User Name")
-    String getUsername() default "";
+    @AttributeDefinition(name = "asset.mgr.assetprefix", description = "Service Name")
+    String getService() default "assetmgr";
 
-    @AttributeDefinition(name = "user.password", description = "Password of the user account",
-            type = AttributeType.PASSWORD)
-    String getPassword() default "";
+    @AttributeDefinition(name = "asset.mgr.assetpaths", description = "Repository paths where assets can be found")
+    String[] getAssetPaths() default { "/content" };
 
-    @AttributeDefinition(name = "asset.mgr.assetprefix", description = "Repository paths where assets can be found")
-    String[] getAssetPrefixPaths() default { "/content/dam" };
+    @AttributeDefinition(name = "asset.mgr.assetsuffixes", description = "Suffixes of assets (use lowercase suffixes!)")
+    String[] getAssetPrefixSuffixes() default { "jpg", "png", "gif", "svg", "pdf", "doc", "docx", "xls", "xlsx" };
 
     @AttributeDefinition(name = "asset.mgr.content",
             description = "Repository paths where content can be found that reference assets")
