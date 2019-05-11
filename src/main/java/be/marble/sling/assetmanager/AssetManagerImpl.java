@@ -1,16 +1,24 @@
 package be.marble.sling.assetmanager;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.TreeMap;
+import java.util.Set;
+import java.util.TreeSet;
 
 import javax.management.StandardMBean;
 
+import org.apache.commons.io.IOUtils;
 import org.apache.sling.api.resource.LoginException;
 import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ResourceResolver;
 import org.apache.sling.api.resource.ResourceResolverFactory;
+import org.apache.sling.api.resource.ValueMap;
 import org.osgi.framework.Constants;
 import org.osgi.service.component.annotations.Activate;
 import org.osgi.service.component.annotations.Component;
@@ -25,6 +33,8 @@ import org.slf4j.LoggerFactory;
                      Constants.SERVICE_VENDOR + "=Marble Consulting (marble.be)" })
 @Designate(ocd = AssetManagerConfiguration.class)
 public class AssetManagerImpl extends StandardMBean implements AssetManager {
+
+    private static final Charset    UTF_8  = Charset.forName("UTF-8");
 
     private static final Logger     LOGGER = LoggerFactory.getLogger(AssetManagerImpl.class);
 
@@ -76,8 +86,16 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         ResourceResolver resourceResolver = null;
         try {
             resourceResolver = this.authenticate();
-            final Map<String, Boolean> assets = this.findAssets(resourceResolver);
-            this.logAssets(assets);
+            final Set<String> unreferencedAssets = this.findAssets(resourceResolver);
+            final Set<String> referencedAssets = new TreeSet<>();
+            this.findReferences(resourceResolver, unreferencedAssets, referencedAssets);
+            switch (op) {
+                case LIST_UNREFERENCED:
+                case EXPORT_REFERENCED:
+                case EXPORT_UNREFERENCED:
+                case REMOVE_UNREFERENCED:
+            }
+            this.logAssets(referencedAssets, unreferencedAssets);
             final long elapsed = System.currentTimeMillis() - start;
             LOGGER.info("Finished running operation {}, elapsed time in milliseconds {}", op, elapsed);
         } catch (final Exception e) {
@@ -90,33 +108,116 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         }
     }
 
-    private void logAssets(final Map<String, Boolean> assets) {
-        for (final Map.Entry<String, Boolean> assetEntry : assets.entrySet()) {
-            LOGGER.info("Asset {} referenced {}", assetEntry.getKey(), assetEntry.getValue());
+    private void findReferences(final ResourceResolver resourceResolver, final Set<String> unreferencedAssets,
+                                final Set<String> referencedAssets) {
+        for (final String contentRootPath : this.contentPaths) {
+            final Resource contentRoot = resourceResolver.getResource(contentRootPath);
+            if (contentRoot == null) {
+                LOGGER.error("Content path {} not found", contentRootPath);
+            } else {
+                this.findReferencesRecursively(unreferencedAssets, referencedAssets, contentRoot);
+            }
         }
     }
 
-    private Map<String, Boolean> findAssets(final ResourceResolver resourceResolver) {
-        final Map<String, Boolean> assets = new TreeMap<>();
+    /**
+     * Finds assets in resource properties and recursively in resource children
+     *
+     * @param assets
+     * @param resource
+     * @return true only if all assets are found
+     */
+    private boolean findReferencesRecursively(final Set<String> unreferencedAssets, final Set<String> referencedAssets,
+                                              final Resource resource) {
+        if (this.checkReferencesInResource(unreferencedAssets, referencedAssets, resource)) {
+            return true;
+        }
+        for (final Resource child : resource.getChildren()) {
+            if (this.findReferencesRecursively(unreferencedAssets, referencedAssets, child)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if asset contains a property that references the asset
+     *
+     * @param assets
+     * @param resource
+     * @return true only if all assets are found.
+     */
+    private boolean checkReferencesInResource(final Set<String> unreferencedAssets, final Set<String> referencedAssets,
+                                              final Resource resource) {
+        final ValueMap valueMap = resource.getValueMap();
+        final String resourcePath = resource.getPath();
+        if (unreferencedAssets.contains(resourcePath) || referencedAssets.contains(resourcePath)) {
+            return unreferencedAssets.isEmpty();
+        }
+        for (final Map.Entry<String, Object> valueEntry : valueMap.entrySet()) {
+            if (unreferencedAssets.isEmpty()) {
+                return true;
+            }
+            final Collection<String> foundAssets = new ArrayList<>();
+            String value = null;
+            if (valueEntry.getValue() instanceof InputStream) {
+                try {
+                    value = IOUtils.toString((InputStream) valueEntry.getValue(), UTF_8);
+                } catch (final IOException e) {
+                    LOGGER.error("Error in checkReferencesInResource:", e);
+                    continue;
+                }
+            } else {
+                value = valueEntry.getValue().toString();
+            }
+            for (final String assetPath : unreferencedAssets) {
+                if (value.contains(assetPath)) {
+                    foundAssets.add(assetPath);
+                }
+            }
+            referencedAssets.addAll(foundAssets);
+            unreferencedAssets.removeAll(foundAssets);
+            for (final String assetPath : foundAssets) {
+                LOGGER.info("Asset {} referenced by {}", assetPath, resource.getPath());
+            }
+        }
+        return unreferencedAssets.isEmpty();
+    }
+
+    private void logAssets(final Set<String> referencedAssets, final Set<String> unreferencedAssets) {
+        LOGGER.info("Referenced assets: {}", referencedAssets.size());
+        for (final String path : referencedAssets) {
+            LOGGER.info("Referenced asset {}", path);
+        }
+        LOGGER.info("Unreferenced assets: {}", unreferencedAssets.size());
+        for (final String path : unreferencedAssets) {
+            LOGGER.info("Unreferenced asset {}", path);
+        }
+        LOGGER.info("Referenced/unreferenced assets: {}/{}", referencedAssets.size(), unreferencedAssets.size());
+    }
+
+    private Set<String> findAssets(final ResourceResolver resourceResolver) {
+        final Set<String> unreferencedAssets = new TreeSet<>();
         for (final String assetPath : this.assetPaths) {
             final Resource assetResource = resourceResolver.getResource(assetPath);
             if (assetResource == null) {
                 LOGGER.error("Asset path {} not found", assetPath);
+            } else {
+                this.addAssetsRecursively(unreferencedAssets, assetResource);
             }
-            this.addAssetsRecursively(assets, assetResource);
         }
-        return assets;
+        return unreferencedAssets;
     }
 
-    private void addAssetsRecursively(final Map<String, Boolean> assets, final Resource resource) {
+    private void addAssetsRecursively(final Set<String> unreferencedAssets, final Resource resource) {
         final String resourceName = resource.getName().toLowerCase();
         for (final String suffix : this.assetSuffixes) {
             if (resourceName.endsWith(suffix)) {
-                assets.put(resource.getPath(), Boolean.FALSE);
+                unreferencedAssets.add(resource.getPath());
             }
         }
         for (final Resource child : resource.getChildren()) {
-            this.addAssetsRecursively(assets, child);
+            this.addAssetsRecursively(unreferencedAssets, child);
         }
     }
 
