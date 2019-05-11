@@ -1,0 +1,2 @@
+# assetManager
+Sling Asset Manager
