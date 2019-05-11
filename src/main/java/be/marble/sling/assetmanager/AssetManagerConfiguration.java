@@ -25,9 +25,10 @@ public @interface AssetManagerConfiguration {
     String getDirectoryName() default "/tmp";
 
     @AttributeDefinition(name = "asset.mgr.operation", description = "Operation asset manager executes on run",
-            options = { @Option(label = "List unreferenced assets", value = "listunreferenced"),
+            options = { @Option(label = "List assets reference information", value = "list"),
                         @Option(label = "Remove unreferenced assets", value = "removeunreferenced"),
-                        @Option(label = "Export referenced assets", value = "exportreferenced"),
-                        @Option(label = "Export unreferenced assets", value = "exportunreferenced") })
+                        @Option(label = "Export all assets", value = "exportall"),
+                        @Option(label = "Export only referenced assets", value = "exportreferenced"),
+                        @Option(label = "Export only unreferenced assets", value = "exportunreferenced") })
     String getOperation() default "listunreferenced";
 }

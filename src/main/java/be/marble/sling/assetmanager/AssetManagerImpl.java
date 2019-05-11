@@ -1,5 +1,8 @@
 package be.marble.sling.assetmanager;
 
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
@@ -34,9 +37,11 @@ import org.slf4j.LoggerFactory;
 @Designate(ocd = AssetManagerConfiguration.class)
 public class AssetManagerImpl extends StandardMBean implements AssetManager {
 
-    private static final Charset    UTF_8  = Charset.forName("UTF-8");
+    private static final Logger     LOGGER   = LoggerFactory.getLogger(AssetManagerImpl.class);
 
-    private static final Logger     LOGGER = LoggerFactory.getLogger(AssetManagerImpl.class);
+    private static final String     JCR_DATA = "jcr:data";
+
+    private static final Charset    UTF_8    = Charset.forName("UTF-8");
 
     @Reference
     private ResourceResolverFactory resourceResolverFactory;
@@ -89,13 +94,22 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
             final Set<String> unreferencedAssets = this.findAssets(resourceResolver);
             final Set<String> referencedAssets = new TreeSet<>();
             this.findReferences(resourceResolver, unreferencedAssets, referencedAssets);
+            this.logAssets(referencedAssets, unreferencedAssets);
             switch (op) {
-                case LIST_UNREFERENCED:
+                case LIST:
+                    break;
+                case EXPORT_ALL:
+                    this.export(resourceResolver, referencedAssets);
+                    this.export(resourceResolver, unreferencedAssets);
+                    break;
                 case EXPORT_REFERENCED:
+                    this.export(resourceResolver, referencedAssets);
+                    break;
                 case EXPORT_UNREFERENCED:
+                    this.export(resourceResolver, unreferencedAssets);
+                    break;
                 case REMOVE_UNREFERENCED:
             }
-            this.logAssets(referencedAssets, unreferencedAssets);
             final long elapsed = System.currentTimeMillis() - start;
             LOGGER.info("Finished running operation {}, elapsed time in milliseconds {}", op, elapsed);
         } catch (final Exception e) {
@@ -104,6 +118,42 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         } finally {
             if (resourceResolver != null) {
                 resourceResolver.close();
+            }
+        }
+    }
+
+    private void export(final ResourceResolver resourceResolver, final Set<String> assetPaths) {
+        final File directory = new File(this.directoryName);
+        for (final String assetPath : assetPaths) {
+            final Resource assetResource = resourceResolver.getResource(assetPath + "/jcr:content");
+            if (assetResource == null) {
+                LOGGER.error("Asset {} has no jcr:content", assetPath);
+                continue;
+            }
+            final ValueMap valueMap = assetResource.getValueMap();
+            final Object jcrData = valueMap.get(JCR_DATA);
+            if ((jcrData == null) || !(jcrData instanceof InputStream)) {
+                LOGGER.error("Asset {}/jcr:content has no inputstream property {}", assetPath, JCR_DATA);
+            } else {
+                String subPath = null;
+                for (final String rootPath : this.assetPaths) {
+                    if (assetPath.startsWith(rootPath)) {
+                        subPath = assetPath.substring(rootPath.length() + 1);
+                        break;
+                    }
+                }
+                if (subPath == null) {
+                    LOGGER.error("Could not obtain sub path of {}", assetPath);
+                    break;
+                }
+                final File assetFile = new File(directory, subPath);
+                final File assetDirectory = assetFile.getParentFile();
+                assetDirectory.mkdirs();
+                try (final BufferedOutputStream bos = new BufferedOutputStream(new FileOutputStream(assetFile))) {
+                    IOUtils.copy((InputStream) jcrData, bos);
+                } catch (final IOException e) {
+                    LOGGER.error("IOException in export:", e);
+                }
             }
         }
     }

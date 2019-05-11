@@ -1,12 +1,13 @@
 package be.marble.sling.assetmanager;
 
 public enum Operation {
-    LIST_UNREFERENCED("listunreferenced"),
+    LIST("list"),
     REMOVE_UNREFERENCED("removeunreferenced"),
+    EXPORT_ALL("exportall"),
     EXPORT_REFERENCED("exportreferenced"),
     EXPORT_UNREFERENCED("exportunreferenced");
 
-    private static final Operation DEFAULT = LIST_UNREFERENCED;
+    private static final Operation DEFAULT = LIST;
 
     private String                 optionValue;
 
