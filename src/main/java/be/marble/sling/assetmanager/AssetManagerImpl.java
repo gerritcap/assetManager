@@ -22,6 +22,7 @@ import org.apache.sling.api.resource.PersistenceException;
 import org.apache.sling.api.resource.Resource;
 import org.apache.sling.api.resource.ResourceResolver;
 import org.apache.sling.api.resource.ResourceResolverFactory;
+import org.apache.sling.api.resource.ResourceUtil;
 import org.apache.sling.api.resource.ValueMap;
 import org.osgi.framework.Constants;
 import org.osgi.service.component.annotations.Activate;
@@ -38,11 +39,11 @@ import org.slf4j.LoggerFactory;
 @Designate(ocd = AssetManagerConfiguration.class)
 public class AssetManagerImpl extends StandardMBean implements AssetManager {
 
-    private static final Logger     LOGGER   = LoggerFactory.getLogger(AssetManagerImpl.class);
+    private static final Logger     LOGGER        = LoggerFactory.getLogger(AssetManagerImpl.class);
 
-    private static final String     JCR_DATA = "jcr:data";
+    private static final String     JCR_DATA      = "jcr:data";
 
-    private static final Charset    UTF_8    = Charset.forName("UTF-8");
+    private static final Charset    UTF_8         = Charset.forName("UTF-8");
 
     @Reference
     private ResourceResolverFactory resourceResolverFactory;
@@ -58,6 +59,8 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
     private String                  directoryName;
 
     private Operation               operation;
+
+    private long                    resourceCount = 0;
 
     public AssetManagerImpl() {
         super(AssetManager.class, true);
@@ -92,9 +95,14 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         ResourceResolver resourceResolver = null;
         try {
             resourceResolver = this.authenticate();
+            LOGGER.info("Finding assets");
             final Set<String> unreferencedAssets = this.findAssets(resourceResolver);
+            LOGGER.info("Assets discovered: {}", unreferencedAssets.size());
             final Set<String> referencedAssets = new TreeSet<>();
-            this.findReferences(resourceResolver, unreferencedAssets, referencedAssets);
+            if (op != Operation.EXPORT_ALL) {
+                this.resourceCount = 0;
+                this.findReferences(resourceResolver, unreferencedAssets, referencedAssets);
+            }
             this.logAssets(referencedAssets, unreferencedAssets);
             switch (op) {
                 case LIST:
@@ -200,6 +208,9 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
      */
     private boolean findReferencesRecursively(final Set<String> unreferencedAssets, final Set<String> referencedAssets,
                                               final Resource resource) {
+        if (ResourceUtil.isSyntheticResource(resource)) {
+            return false;
+        }
         if (this.checkReferencesInResource(unreferencedAssets, referencedAssets, resource)) {
             return true;
         }
@@ -220,6 +231,10 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
      */
     private boolean checkReferencesInResource(final Set<String> unreferencedAssets, final Set<String> referencedAssets,
                                               final Resource resource) {
+        this.resourceCount++;
+        if ((this.resourceCount % 500) == 0) {
+            LOGGER.info("Resources traversed: {}, currently at {}", this.resourceCount, resource.getPath());
+        }
         final ValueMap valueMap = resource.getValueMap();
         final String resourcePath = resource.getPath();
         if (unreferencedAssets.contains(resourcePath) || referencedAssets.contains(resourcePath)) {
@@ -230,20 +245,32 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
                 return true;
             }
             final Collection<String> foundAssets = new ArrayList<>();
-            String value = null;
-            if (valueEntry.getValue() instanceof InputStream) {
-                try {
-                    value = IOUtils.toString((InputStream) valueEntry.getValue(), UTF_8);
-                } catch (final IOException e) {
-                    LOGGER.error("Error in checkReferencesInResource:", e);
-                    continue;
-                }
+            String[] values = null;
+            /*
+             * ignore binary values
+             *
+             * if (valueEntry.getValue() instanceof InputStream) {
+             * try {
+             * value = new String[] { IOUtils.toString((InputStream) valueEntry.getValue(), UTF_8) };
+             * } catch (final IOException e) {
+             * LOGGER.error("Error in checkReferencesInResource:", e);
+             * continue;
+             * }
+             * } else {
+             */
+            if (valueEntry.getValue() instanceof String[]) {
+                values = (String[]) valueEntry.getValue();
+            } else if (valueEntry.getValue() instanceof String) {
+                values = new String[] { valueEntry.getValue().toString() };
             } else {
-                value = valueEntry.getValue().toString();
+                continue;
             }
+            /* } */
             for (final String assetPath : unreferencedAssets) {
-                if (value.contains(assetPath)) {
-                    foundAssets.add(assetPath);
+                for (final String value : values) {
+                    if (value.contains(assetPath)) {
+                        foundAssets.add(assetPath);
+                    }
                 }
             }
             referencedAssets.addAll(foundAssets);
@@ -285,6 +312,9 @@ public class AssetManagerImpl extends StandardMBean implements AssetManager {
         for (final String suffix : this.assetSuffixes) {
             if (resourceName.endsWith(suffix)) {
                 unreferencedAssets.add(resource.getPath());
+                if ((unreferencedAssets.size() % 500) == 0) {
+                    LOGGER.info("Assets discovered: {}", unreferencedAssets.size());
+                }
             }
         }
         for (final Resource child : resource.getChildren()) {
